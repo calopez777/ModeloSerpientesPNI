@@ -7,14 +7,25 @@ output: html_document
 ```{r setup, include=FALSE}
 library(rstan)
 library(readxl)
+library(tidyverse)
 options(mc.cores=parallel::detectCores());
 knitr::opts_chunk$set
+
 (echo = TRUE)
 ```
 
 #importar datos
 ```{r}
-df <- read_excel("C:/Rpract/ofidPNIcom.xls")
+df <- read_excel("modelo.xlsx")
+
+```
+
+
+# calcular el numero de serpientes vistas por mes
+```{r}
+df%>%group_by(Año,Mes)%>%summarise(nSerp=n())->df0
+
+
 
 ```
 
@@ -112,7 +123,7 @@ generated quantities {
    real loglikelihood; 
    prior=normal_lpdf(sn_mean_log_site_density_prior|0,1);
      // the likelihood function asses how good is the estimation of the expected number of sights per transect
-   loglikelihood=poisson_lpmf(nGroup|transect_expected_sights);
+ loglikelihood=poisson_lpmf(nSerpent|monthly_expected_sights);
 
 
 
@@ -126,68 +137,31 @@ Now we build a function to feed stan with the data
 model_parameters<-c("geometric_mean_site_density");
 
 
-data_to_stan<-function(db, sampledArea)
-   {
-   beta=1; 
-   N=nrow(db);
-
-   sampledAreaMonthly=sampledArea;
+data_to_stan<-function(db, sampledArea){
+   rdata<-list(beta=1,
+   N=nrow(db),
+   sampledAreaMonthly=sampledArea,
    
-   nSerpent=
+   nSerpent=db$nSerp,
    
-     // here I declare some parameters that I have to come up with to describe the 
-   // prior distribution of the fitted parameters. 
-   // I provide a mean and a standard deviation for each one of the parameters 
-   real  fp_mean_mean_log_site_density_prior;
-   real <lower=0> fp_sd_mean_log_site_density_prior;
-   
-   
-   d%>%group_by(`Site name`)%>%summarize(isReserve=mean(status!="U"),siteArea=mean(NVDI2+NVDI3+NVDI4))->ds;
-   isReserve=ds$isReserve;
-   
-   lengthTransect=d$`Transect Length (km)`;
-   nGroup=d$`Number of groups`;
-   nIndividual=d$`Number of Individual`;
-   perpDistance=d$`Perp. Distance (m)`;
-   siteArea=ds$siteArea;
-   
-   
-    fp_mean_log_site_density_prior=log(1);
-     fp_sd_log_site_density_prior=log(2);
-   
-   
-
-   fp_mean_mean_log_site_density_prior=log(1);
-   fp_sd_mean_log_site_density_prior=log(2)/2;
-   
-
-   fp_mean_log_detectability_distance_prior=log(40);
-   fp_sd_log_detectability_distance_prior=log(2);
-   
-
-   
-   
-   rdata<-list(beta=beta,
-               N=N,
-               K=K,
-              iSite=iSite, 
-              isReserve=isReserve,
-              lengthTransect=lengthTransect,
-   nGroup=nGroup,
-   nIndividual=nIndividual,
-   perpDistance=perpDistance,
-   siteArea=siteArea,
-   fp_mean_log_site_density_prior=fp_mean_log_site_density_prior,
-   fp_sd_log_site_density_prior=fp_sd_log_site_density_prior,
-   fp_mean_mean_log_site_density_prior=fp_mean_mean_log_site_density_prior,
-   fp_sd_mean_log_site_density_prior=fp_sd_mean_log_site_density_prior,
-   fp_mean_log_detectability_distance_prior=fp_mean_log_detectability_distance_prior,
-   fp_sd_log_detectability_distance_prior=fp_sd_log_detectability_distance_prior
-
-   
-   );
+fp_mean_mean_log_site_density_prior=1, # km^-2
+   fp_sd_mean_log_site_density_prior=log(4),
+                );
 }
 ```
 
+
+
+```{r}
+source("rstan_evidence_calculator.R");
+rdata<-df0%>%data_to_stan();
+
+
+beta= c(0,0.01,0.03,0.1,0.3,1.0);
+knitr::opts_chunk$set(echo = FALSE);
+
+r<-runSampling(model=model,mydata=rdata,betavector = beta, betalabel="beta",iter=4000, thin=1);
+
+```
 
 
