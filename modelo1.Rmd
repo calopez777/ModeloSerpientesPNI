@@ -1,0 +1,293 @@
+---
+title: "modelo1"
+author: "calopez"
+date: "19/11/2021"
+output: html_document
+---
+```{r setup, include=FALSE}
+library(rstan)
+library(readxl)
+library(tidyverse)
+
+options(mc.cores=parallel::detectCores());
+#knitr::opts_chunk$set
+source("rstan_evidence_calculator.R");
+#devtools::install_github("lmoffatt/EvidenceCalcUsingRstan")
+#library(EvidenceCalcUsingRstan)
+
+(echo = TRUE)
+```
+
+#importar datos
+```{r}
+df <- read_excel("modelo.xlsx")
+
+```
+
+
+# calcular el numero de serpientes vistas por mes
+```{r}
+df%>%group_by(Año,Mes,Especie)%>%summarise(nSerp=n())%>%arrange(Año,Mes)->df1
+
+
+
+
+```
+
+
+
+
+## modelo uno
+
+```{stan output.var=model}
+
+data {
+   real<lower=0, upper=1> beta; // for Evidence
+   int<lower=0> N; // number of observations
+   int<lower=0> nCells; // number of units of observations (i.e, month year)
+    int<lower=0> K; // number of species 
+     
+   // here I declare the data we use in the model
+   int  iSpecies[N];
+   int minIndexCell[nCells]; // min index of each cell
+   int maxIndexCell[nCells]; // max index of each cell
+   //int  iAmbiente[N];
+   
+   real<lower=0> sampledAreaMonthly;
+   
+
+   
+   int nSerpent[N];
+   
+     // here I declare some parameters that I have to come up with to describe the 
+   // prior distribution of the fitted parameters. 
+   // I provide a mean and a standard deviation for each one of the parameters 
+   real  fp_mean_mean_log_density_prior;
+   real <lower=0> fp_sd_mean_log_density_prior;
+   
+   
+   real  fp_mean_log_sd_log_density_prior;
+   real <lower=0> fp_sd_log_sd_log_density_prior;
+   
+   
+  }
+
+
+parameters {
+   // I had to do a little trick here, for some reason rstan works better if 
+   // we work with standarized parameters (that after we substract the mean and divide by
+   // the standard deviation). So the algorithm will work on this parameters: 
+   // the real ones are the transformed ones
+
+   real sn_mean_log_density;
+   
+   real sn_sd_species_log_density;
+   
+   vector[K] sn_delta_species_log_density;
+}
+
+transformed parameters {
+   // ... declarations ... statements ...
+   // here I transform the standarize parameters to the regular ones.
+   
+   
+   
+   real mean_log_density=sn_mean_log_density*
+   fp_sd_mean_log_density_prior+fp_mean_mean_log_density_prior;
+   
+
+   real sd_species_log_density=sn_mean_log_density*
+   fp_mean_log_sd_log_density_prior+fp_mean_log_sd_log_density_prior;
+   
+   
+   real geometric_mean_density=exp(mean_log_density);
+
+
+  vector[K] species_density;
+  vector[N] monthly_expected_sights;
+  vector[nCells] un_observed_density;
+  
+  real total_density=0;
+  
+  
+  for (i in 1:K)
+  {
+      species_density[i]=exp(mean_log_density+
+      sn_delta_species_log_density[i]*sd_species_log_density);
+      total_density+=species_density[i];
+  }
+  
+  
+  
+   for (n in 1:nCells)
+   
+   {
+     un_observed_density[n]=total_density;
+     for (i in minIndexCell[n]: maxIndexCell[n])
+        {
+         monthly_expected_sights[i]=species_density[iSpecies[i]];
+         un_observed_density[n]-=monthly_expected_sights[i];
+        }
+   }
+
+}
+
+model {
+    // in this block we set the distributions.
+    // I also hacked rstan to calculate the Evidence. 
+    
+    // I define two variables: prior and loglikelihood
+   
+   real prior;
+   real loglikelihood;
+   
+   // in the prior I sum the prior distribution of the  working parameters, all normal
+   // distributions of the transformed parameters
+   prior=normal_lpdf(sn_mean_log_density|0,1);
+   prior+=normal_lpdf(sn_sd_species_log_density|0,1);
+  prior+=normal_lpdf(sn_delta_species_log_density|0,1);
+ 
+   
+    // the likelihood function asses how good is the estimation of the expected number of sights per month
+   loglikelihood=poisson_lpmf(nSerpent|monthly_expected_sights);
+   loglikelihood+=poisson_lpmf(0|un_observed_density);
+
+
+   // this is the distribution that is sampled: it depends on the parameter beta
+   // we have to run this model for different values of beta from 0 to 1
+   
+   target+=prior+beta*loglikelihood;
+   // ... declarations ... statements ...
+}
+
+generated quantities {
+   // unfortunately I have to calculate again the prior and loglikelihood so rstan records its
+   // values. 
+   real prior; 
+   real loglikelihood; 
+   prior=normal_lpdf(sn_mean_log_density|0,1);
+   prior+=normal_lpdf(sn_sd_species_log_density|0,1);
+   prior+=normal_lpdf(sn_delta_species_log_density|0,1);
+     // the likelihood function asses how good is the estimation of the expected number of sights per transect
+ loglikelihood=poisson_lpmf(nSerpent|monthly_expected_sights);
+
+ loglikelihood+=poisson_lpmf(0|un_observed_density);
+
+
+}
+
+```
+
+
+Now we build a function to feed stan with the data
+```{r}
+model_parameters<-c("geometric_mean_density");
+```
+
+
+```{r}
+data_to_stan<-function(df1, sampledArea){
+  df1%>%group_by(Año,Mes)%>%summarise(nSp=n())%>%arrange(Año,Mes)->df0
+  mutate(group_by(df0),indexmax=cumsum(nSp),indexmin=indexmax-nSp+1)->df0
+
+  fSp=as.factor(df1$Especie)
+  
+   rdata<-list(beta=1,
+               N=nrow(df1),
+    nCells=nrow(df0), # number of units of observations (i.e, month year)
+    K=length(levels(fSp)), # number of species 
+     
+   iSpecies=as.integer(fSp),
+   minIndexCell=df0$indexmin,# min index of each cell
+   maxIndexCell=df0$indexmax,# max index of each cell
+   
+    sampledAreaMonthly=sampledArea,
+    nSerpent=df1$nSerp,
+    fp_mean_mean_log_density_prior=log(1),
+     fp_sd_mean_log_density_prior=log(2),
+     fp_mean_log_sd_log_density_prior=log(log(5)),
+      fp_sd_log_sd_log_density_prior=log(log(2)))
+}
+```
+
+
+
+```{r}
+sampledA = 36*8/1000*4+3.7*2*3/1000*26  # 36 km RN101 8 m ancho 4 veces por mes, 3.7 km macuco 3m ancho 26 veces al mes
+rdata<-data_to_stan(df1,sampledArea=sampledA );
+
+
+beta= c(0,0.01,0.03,0.1,0.3,1.0);
+knitr::opts_chunk$set(echo = FALSE);
+```
+
+
+```{r}
+r<-runSampling(model=model,mydata=rdata,betavector = beta, betalabel="beta",iter=4000, thin=1);
+
+```
+
+Lets first calculate the evidence.
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE);
+
+E<-Evidencerun(r,beta);
+E
+```
+
+
+The evidence is then 
+```{r}
+E$I$Ev 
+```
+
+
+
+
+
+
+Lets see the values for the parameters
+
+```{r}
+summary(r[[length(beta)]])->s;
+s$summary->ss;
+ss
+```
+
+
+Lets process the runs to plot them
+
+```{r}
+as.data.frame(r[[length(beta)]])->mcmc_1;
+mcmc_1$beta=1;
+as.data.frame(r[[1]])->mcmc_0;
+mcmc_0$beta=0;
+
+rbind(mcmc_0,mcmc_1)->mcmc2;
+mcmc2$distribution=c("prior","posterior")[mcmc2$beta+1];
+
+
+mcmc2%>%select(distribution,model_parameters)%>%pivot_longer(
+    cols=model_parameters,
+    names_to = "parameters", 
+    values_to = "value",
+    values_drop_na = TRUE
+  )->parameters;
+
+
+
+
+
+```
+
+Lets see the plot of the parameters
+
+```{r}
+ggplot(parameters,aes(x=value, after_stat(ndensity),group=distribution))+geom_density(aes(fill=distribution),alpha=0.2)+
+   facet_wrap(vars(parameters),ncol=2,scales ="free")+scale_x_log10()+
+   theme(axis.title.y=element_blank(),
+         axis.text.y=element_blank(),
+         axis.ticks.y=element_blank()
+         )
+```
