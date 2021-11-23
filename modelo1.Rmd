@@ -96,8 +96,8 @@ transformed parameters {
    fp_sd_mean_log_density_prior+fp_mean_mean_log_density_prior;
    
 
-   real sd_species_log_density=sn_mean_log_density*
-   fp_mean_log_sd_log_density_prior+fp_mean_log_sd_log_density_prior;
+   real sd_species_log_density=exp(sn_sd_species_log_density*
+   fp_sd_log_sd_log_density_prior+fp_mean_log_sd_log_density_prior);
    
    
    real geometric_mean_density=exp(mean_log_density);
@@ -105,7 +105,7 @@ transformed parameters {
 
   vector[K] species_density;
   vector[N] monthly_expected_sights;
-  vector[nCells] un_observed_density;
+  vector[nCells] unObserved;
   
   real total_density=0;
   
@@ -122,12 +122,13 @@ transformed parameters {
    for (n in 1:nCells)
    
    {
-     un_observed_density[n]=total_density;
+     unObserved[n]=total_density;
      for (i in minIndexCell[n]: maxIndexCell[n])
         {
-         monthly_expected_sights[i]=species_density[iSpecies[i]];
-         un_observed_density[n]-=monthly_expected_sights[i];
+         monthly_expected_sights[i]=species_density[iSpecies[i]]*sampledAreaMonthly;
+         unObserved[n]-=monthly_expected_sights[i];
         }
+     unObserved[n]=unObserved[n]*sampledAreaMonthly;     
    }
 
 }
@@ -150,7 +151,7 @@ model {
    
     // the likelihood function asses how good is the estimation of the expected number of sights per month
    loglikelihood=poisson_lpmf(nSerpent|monthly_expected_sights);
-   loglikelihood+=poisson_lpmf(0|un_observed_density);
+   loglikelihood+=poisson_lpmf(0|unObserved);
 
 
    // this is the distribution that is sampled: it depends on the parameter beta
@@ -171,7 +172,7 @@ generated quantities {
      // the likelihood function asses how good is the estimation of the expected number of sights per transect
  loglikelihood=poisson_lpmf(nSerpent|monthly_expected_sights);
 
- loglikelihood+=poisson_lpmf(0|un_observed_density);
+ loglikelihood+=poisson_lpmf(0|unObserved);
 
 
 }
@@ -206,7 +207,7 @@ data_to_stan<-function(df1, sampledArea){
     fp_mean_mean_log_density_prior=log(1),
      fp_sd_mean_log_density_prior=log(2),
      fp_mean_log_sd_log_density_prior=log(log(5)),
-      fp_sd_log_sd_log_density_prior=log(log(2)))
+      fp_sd_log_sd_log_density_prior=log(2))
 }
 ```
 
@@ -252,8 +253,17 @@ Lets see the values for the parameters
 ```{r}
 summary(r[[length(beta)]])->s;
 s$summary->ss;
-ss
+
+species_names<-df1$Especie;
+summary(r2[[length(beta)]])->s2;
+s2$summary->ss2;
+site_count<-sapply(site_names,paste0,"_group_count");
+site_density<-sapply(site_names,paste0,"_density");
+rownames(ss2)[startsWith(rownames(ss2),"siteNGroups")]<-site_count;
+rownames(ss2)[startsWith(rownames(ss2),"site_density")]<-site_density;
+ss2[model2_parameters,]
 ```
+
 
 
 Lets process the runs to plot them
