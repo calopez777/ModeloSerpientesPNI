@@ -11,8 +11,9 @@ library(tidyverse)
 
 options(mc.cores=parallel::detectCores());
 #knitr::opts_chunk$set
-devtools::install_github("lmoffatt/EvidenceCalcUsingRstan")
-library(EvidenceCalcUsingRstan)
+source("rstan_evidence_calculator.R");
+#devtools::install_github("lmoffatt/EvidenceCalcUsingRstan")
+#library(EvidenceCalcUsingRstan)
 
 (echo = TRUE)
 ```
@@ -168,7 +169,7 @@ knitr::opts_chunk$set(echo = FALSE);
 
 
 ```{r}
-r<-EvidenceCalcUsingRstan::runSampling(model=model,mydata=rdata,betavector = beta, betalabel="beta",iter=4000, thin=1);
+r<-runSampling(model=model,mydata=rdata,betavector = beta, betalabel="beta",iter=4000, thin=1);
 
 ```
 
@@ -176,6 +177,7 @@ Lets first calculate the evidence.
 
 ```{r}
 knitr::opts_chunk$set(echo = TRUE);
+
 E<-Evidencerun(r,beta);
 E
 ```
