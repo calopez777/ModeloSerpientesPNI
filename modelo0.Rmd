@@ -8,8 +8,11 @@ output: html_document
 library(rstan)
 library(readxl)
 library(tidyverse)
+
 options(mc.cores=parallel::detectCores());
-knitr::opts_chunk$set
+#knitr::opts_chunk$set
+devtools::install_github("lmoffatt/EvidenceCalcUsingRstan")
+library(EvidenceCalcUsingRstan)
 
 (echo = TRUE)
 ```
@@ -135,8 +138,10 @@ generated quantities {
 Now we build a function to feed stan with the data
 ```{r}
 model_parameters<-c("geometric_mean_site_density");
+```
 
 
+```{r}
 data_to_stan<-function(db, sampledArea){
    rdata<-list(beta=1,
    N=nrow(db),
@@ -145,7 +150,7 @@ data_to_stan<-function(db, sampledArea){
    nSerpent=db$nSerp,
    
 fp_mean_mean_log_site_density_prior=1, # km^-2
-   fp_sd_mean_log_site_density_prior=log(4),
+   fp_sd_mean_log_site_density_prior=log(4)
                 );
 }
 ```
@@ -153,15 +158,80 @@ fp_mean_mean_log_site_density_prior=1, # km^-2
 
 
 ```{r}
-source("rstan_evidence_calculator.R");
-rdata<-df0%>%data_to_stan();
+sampledA = 36*8/1000*4+3.7*2*3/1000*26  # 36 km RN101 8 m ancho 4 veces por mes, 3.7 km macuco 3m ancho 26 veces al mes
+rdata<-data_to_stan(df0,sampledArea=sampledA );
 
 
 beta= c(0,0.01,0.03,0.1,0.3,1.0);
 knitr::opts_chunk$set(echo = FALSE);
-
-r<-runSampling(model=model,mydata=rdata,betavector = beta, betalabel="beta",iter=4000, thin=1);
-
 ```
 
 
+```{r}
+r<-EvidenceCalcUsingRstan::runSampling(model=model,mydata=rdata,betavector = beta, betalabel="beta",iter=4000, thin=1);
+
+```
+
+Lets first calculate the evidence.
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE);
+E<-Evidencerun(r,beta);
+E
+```
+
+
+The evidence is then 
+```{r}
+E$I$Ev 
+```
+
+
+
+
+
+
+Lets see the values for the parameters
+
+```{r}
+summary(r[[length(beta)]])->s;
+s$summary->ss;
+ss
+```
+
+
+Lets process the runs to plot them
+
+```{r}
+as.data.frame(r[[length(beta)]])->mcmc_1;
+mcmc_1$beta=1;
+as.data.frame(r[[1]])->mcmc_0;
+mcmc_0$beta=0;
+
+rbind(mcmc_0,mcmc_1)->mcmc2;
+mcmc2$distribution=c("prior","posterior")[mcmc2$beta+1];
+
+
+mcmc2%>%select(distribution,model_parameters)%>%pivot_longer(
+    cols=model_parameters,
+    names_to = "parameters", 
+    values_to = "value",
+    values_drop_na = TRUE
+  )->parameters;
+
+
+
+
+
+```
+
+Lets see the plot of the parameters
+
+```{r}
+ggplot(parameters,aes(x=value, after_stat(ndensity),group=distribution))+geom_density(aes(fill=distribution),alpha=0.2)+
+   facet_wrap(vars(parameters),ncol=2,scales ="free")+scale_x_log10()+
+   theme(axis.title.y=element_blank(),
+         axis.text.y=element_blank(),
+         axis.ticks.y=element_blank()
+         )
+```
